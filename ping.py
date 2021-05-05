@@ -1,7 +1,12 @@
-import socket
 import os
-import time
+import select
+import socket
 import struct
+import sys
+import time
+import getopt
+import signal
+import threading
 
 default_timer = time.time
 ICMP_ECHO = 8
@@ -9,6 +14,34 @@ ICMP_MAX_RECV = 2048
 MAX_SLEEP = 1000
 COUNT = 4
 result = []
+threads = []
+
+
+def calculate_checksum(source_string):
+    countTo = (int(len(source_string) / 2)) * 2
+    sum = 0
+    count = 0
+    loByte = 0
+    hiByte = 0
+    while count < countTo:
+        if (sys.byteorder == "little"):
+            loByte = source_string[count]
+            hiByte = source_string[count + 1]
+        else:
+            loByte = source_string[count + 1]
+            hiByte = source_string[count]
+        sum = sum + (hiByte * 256 + loByte)
+        count += 2
+    if countTo < len(source_string):
+        loByte = source_string[len(source_string) - 1]
+        sum += loByte
+    sum &= 0xffffffff
+    sum = (sum >> 16) + (sum & 0xffff)
+    sum += (sum >> 16)
+    answer = ~sum & 0xffff
+    answer = socket.htons(answer)
+    return answer
+
 
 def is_valid_ip4_address(addr):
     parts = addr.split(".")
@@ -204,4 +237,53 @@ class Ping(object):
             timeout = timeout - select_duration
             if timeout <= 0:
                 return None, 0, 0, 0, 0
-  
+
+
+def ping(hostname, timeout=1000, packet_size=55, *args, **kwargs):
+    p = Ping(hostname, timeout, packet_size, *args, **kwargs)
+    return p.run()
+
+
+def signal_handler(signal, frame):
+    print("\n--------- Statistics ---------")
+    for item in result:
+        print(item)
+    sys.exit(0)
+
+
+def main(argv):
+    signal.signal(signal.SIGINT, signal_handler)
+    time_out = 0
+    pack_size = 0
+    try:
+        opts, args = getopt.getopt(argv, "ht:s:", ["timeout=", "size="])
+    except getopt.GetoptError:
+        print('test.py -t <timeout> -s <packet_size>')
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt == '-h':
+            print('test.py -t <timeout> -s <packet_size>')
+            sys.exit()
+        elif opt in ("-t", "--timeout"):
+            time_out = arg
+        elif opt in ("-s", "--size"):
+            pack_size = arg
+    host = input("Enter hosts and ips: \n")
+    host = host.split()
+    for t in range(len(host)):
+        threads.append(threading.Thread(
+            target=ping, args=(host[t], time_out, pack_size, )))
+
+    for t in range(len(host)):
+        threads[t].start()
+
+    for t in range(len(host)):
+        threads[t].join()
+
+    while True:
+        time.sleep(0)
+    # ping(host, timeout=time_out or 1000, packet_size=pack_size or 55)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
